@@ -68,7 +68,7 @@ RUNTIME_FUNCTION(Runtime_FunctionFirstExecution) {
   DCHECK(FLAG_log_function_events);
   Handle<SharedFunctionInfo> sfi(function->shared());
   LOG(isolate, FunctionEvent("first-execution", Script::cast(sfi->script()), -1,
-                             0, sfi->start_position(), sfi->end_position(),
+                             0, sfi->StartPosition(), sfi->EndPosition(),
                              sfi->DebugName()));
   function->feedback_vector()->ClearOptimizationMarker();
   // Return the code to continue execution, we don't care at this point whether
@@ -129,20 +129,15 @@ RUNTIME_FUNCTION(Runtime_InstantiateAsmJs) {
       return *result.ToHandleChecked();
     }
   }
-  // Remove wasm data, mark as broken for asm->wasm,
-  // replace code with CompileLazy, and return a smi 0 to indicate failure.
+  // Remove wasm data, mark as broken for asm->wasm, replace function code with
+  // CompileLazy, and return a smi 0 to indicate failure.
   if (function->shared()->HasAsmWasmData()) {
-    function->shared()->ClearAsmWasmData();
+    function->shared()->FlushCompiled();
   }
   function->shared()->set_is_asm_wasm_broken(true);
   DCHECK(function->code() ==
          isolate->builtins()->builtin(Builtins::kInstantiateAsmJs));
   function->set_code(isolate->builtins()->builtin(Builtins::kCompileLazy));
-  if (function->shared()->code() ==
-      isolate->builtins()->builtin(Builtins::kInstantiateAsmJs)) {
-    function->shared()->set_code(
-        isolate->builtins()->builtin(Builtins::kCompileLazy));
-  }
   return Smi::kZero;
 }
 
@@ -171,6 +166,14 @@ RUNTIME_FUNCTION(Runtime_NotifyDeoptimized) {
   // Ensure the context register is updated for materialized objects.
   JavaScriptFrameIterator top_it(isolate);
   JavaScriptFrame* top_frame = top_it.frame();
+  // TODO(7639): We currently don't have a valid context in
+  // JavaScriptBuiltinContinuationFrames; skip them and use the
+  // parent's context instead.
+  if (top_frame->is_java_script_builtin_continuation() ||
+      top_frame->is_java_script_builtin_with_catch_continuation()) {
+    top_it.Advance();
+    top_frame = top_it.frame();
+  }
   isolate->set_context(Context::cast(top_frame->context()));
 
   // Invalidate the underlying optimized code on non-lazy deopts.
@@ -290,7 +293,7 @@ RUNTIME_FUNCTION(Runtime_CompileForOnStackReplacement) {
   }
 
   if (!function->IsOptimized()) {
-    function->set_code(function->shared()->code());
+    function->set_code(function->shared()->GetCode());
   }
   return nullptr;
 }
